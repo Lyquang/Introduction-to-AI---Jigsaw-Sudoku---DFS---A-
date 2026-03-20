@@ -1,7 +1,7 @@
 DFS Algorithm:
 States: 6433
-Time: 151.29 seconds
-Memory: 5061.59 KB
+Time: 158.03 seconds
+Memory: 5061.53 KB
 
 [[4 0 9 3 0 8 0 0 0]
  [0 0 0 8 0 4 0 0 0]

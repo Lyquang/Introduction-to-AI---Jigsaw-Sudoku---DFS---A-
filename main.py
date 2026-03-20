@@ -88,26 +88,6 @@ def find_available_numbers(x, i, j):
     # Trả về tập hợp các số khả dụng bằng cách lấy hiệu của tập numbers_set với hợp của các tập đã xuất hiện
     return numbers_set.difference(set_1.union(set_2.union(set_3)))
 
-# def solve(sudoku_array, state_count=0, states=[]):
-#     empty_index = find_empty(sudoku_array)
-#     if not empty_index:
-#         return True, state_count, states
-#     available_numbers = find_available_numbers(sudoku_array, empty_index[0], empty_index[1])
-#     if len(available_numbers) == 0:
-#         return False, state_count, states
-#     for x in available_numbers:
-#         sudoku_array[empty_index] = x
-#         display_sudoku(sudoku_array)
-#         root.update()
-#         states.append(sudoku_array.copy())
-#         state_count += 1
-#         solved, state_count, states = solve(sudoku_array, state_count, states)
-#         if solved:
-#             return True, state_count, states
-#         sudoku_array[empty_index] = 0
-#         display_sudoku(sudoku_array)
-#         root.update()
-#     return False, state_count, states
 
 def solve(sudoku_array, state_count=0, states=[]):
     # BƯỚC 1: Chọn ô để giải. Hàm find_empty chọn ô có ít lựa chọn nhất (MRV)
@@ -368,7 +348,7 @@ frame.pack(pady=10)
 entries = [[None for _ in range(N)] for _ in range(N)]
 for i in range(N):
     for j in range(N):
-        entries[i][j] = tk.Entry(frame, width=4, font=('Arial', 22, 'bold'), justify='center', borderwidth=2, relief="ridge")
+        entries[i][j] = tk.Entry(frame, width=4, font=('Arial', 22, 'bold'), justify='center', borderwidth=2, relief="solid")
         entries[i][j].grid(row=i, column=j, ipadx=1, ipady=15, padx=3, pady=3)
 
 button_frame = tk.Frame(root)

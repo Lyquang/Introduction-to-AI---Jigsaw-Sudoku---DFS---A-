@@ -8,11 +8,11 @@ import os
 import random
 import sys
 
-# =============================================================================
-# 1. KHỞI TẠO HỆ THỐNG & ĐỌC THAM SỐ
-# =============================================================================
+# ==========================================
+# KHỞI TẠO VÀ ĐỌC DỮ LIỆU
+# ==========================================
 if len(sys.argv) != 3:
-    print("Cách dùng: python script.py <N> <A|B>")
+    print("Cách dùng: python main.py <N> <A|B>")
     sys.exit(1)
 
 try:
@@ -22,203 +22,380 @@ except ValueError:
     print("Lỗi: Tham số thứ nhất phải là một số nguyên")
     sys.exit(1)
 
+# Xóa file output cũ nếu có
 if os.path.exists('output.txt'):
     os.remove('output.txt')
 
-try:
-    with open('Sudoku_Regions.txt') as f:
-        content = f.read()
-    dict_construct = 'regions_dict = {' + content + '}'
-    regions_dict = {}
-    exec(dict_construct)
-except Exception as e:
-    print(f"Lỗi khi đọc file Sudoku_Regions.txt: {e}")
-    sys.exit(1)
-
+# Đọc cấu hình vùng
+with open('Sudoku_Regions.txt') as f:
+    content = f.read()
+dict_construct = 'regions_dict = {' + content + '}'
+regions_dict = {}
+exec(dict_construct)
 numbers_set = set(range(1, N + 1))
-
-# =============================================================================
-# 2. CÁC HÀM HỖ TRỢ LOGIC
-# =============================================================================
 
 def construct_sudoku_array():
     with open('Sudoku.txt') as f:
-        raw_data = f.read().replace(',', ' ').split()
-        data = [int(x) for x in raw_data]
-    if len(data) != N * N:
-        raise ValueError(f"Dữ liệu trong Sudoku.txt không khớp với N={N}")
-    return np.array(data, dtype=int).reshape(N, N)
+        file_content = list(filter((lambda x: x != ',' and x != '\n'), list(f.read())))
+    sudoku_array = np.array(file_content, dtype=int).reshape(N, N)
+    return sudoku_array
+
+# Tạo bản đồ vùng cực nhanh
+region_map = np.zeros((N, N), dtype=object)
+for r_id, points in regions_dict.items():
+    for (r, c) in points:
+        region_map[r, c] = r_id
+
+def find_region_fast(i, j):
+    return region_map[i, j]
 
 def find_region(i, j):
     for v, d in regions_dict.items():
         if (i, j) in d:
             return v
-    return None
+
+# ==========================================
+# CÁC HÀM XỬ LÝ LOGIC CHUNG
+# ==========================================
+def find_regional_numbers_set(x, i, j):
+    regional_points = regions_dict[find_region_fast(i, j)]
+    regional_points_set = set(x[a] for a in regional_points)
+    return regional_points_set
 
 def find_available_numbers(x, i, j):
-    set_row = set(x[i, :])
-    set_col = set(x[:, j])
-    reg_id = find_region(i, j)
-    set_region = set(x[p] for p in regions_dict[reg_id])
-    used = set_row.union(set_col).union(set_region)
-    return numbers_set.difference(used)
+    set_1 = set(x[i, :])
+    set_2 = set(x[:, j])
+    set_3 = find_regional_numbers_set(x, i, j)
+    return numbers_set.difference(set_1.union(set_2.union(set_3)))
 
 def find_empty(x):
-    empty_cells = []
-    for index, item in np.ndenumerate(x):
-        if item == 0:
-            available = find_available_numbers(x, index[0], index[1])
-            empty_cells.append((index, len(available)))
-    if not empty_cells: return None
-    empty_cells.sort(key=lambda x: x[1])
-    return empty_cells[0][0]
+    """
+    Tối ưu hóa: Tìm ô trống dựa trên Heuristic MRV (Minimum Remaining Values)
+    Cắt nhánh sớm nếu có ô chỉ còn <= 1 lựa chọn.
+    """
+    min_options = N + 1
+    best_cell = None
+    for i in range(N):
+        for j in range(N):
+            if x[i, j] == 0:
+                options = len(find_available_numbers(x, i, j))
+                if options <= 1:
+                    return (i, j) # Cắt nhánh sớm
+                if options < min_options:
+                    min_options = options
+                    best_cell = (i, j)
+    return best_cell
 
-# =============================================================================
-# 3. THUẬT TOÁN (DFS & A*)
-# =============================================================================
+def is_valid(sudoku, row, col):
+    val = sudoku[row][col]
+    if np.count_nonzero(sudoku[row, :] == val) > 1: return False
+    if np.count_nonzero(sudoku[:, col] == val) > 1: return False
+    region = regions_dict[find_region_fast(row, col)]
+    return np.count_nonzero([sudoku[i,j] == val for (i,j) in region]) <= 1
 
-def solve_dfs(sudoku_array, stats):
+# ==========================================
+# THUẬT TOÁN DFS (TỐI ƯU MRV)
+# ==========================================
+def solve(sudoku_array, state_count=0, states=None):
+    if states is None:
+        states = []
+
     empty_index = find_empty(sudoku_array)
-    if not empty_index: return True
+    if not empty_index:
+        return True, state_count, states
+    
     row, col = empty_index
-    available = find_available_numbers(sudoku_array, row, col)
-    for num in sorted(list(available)):
-        sudoku_array[row, col] = num
-        display_sudoku(sudoku_array)
-        root.update()
-        stats['count'] += 1
-        if solve_dfs(sudoku_array, stats): return True
-        sudoku_array[row, col] = 0
-        display_sudoku(sudoku_array)
-        root.update()
-    return False
+    available_numbers = find_available_numbers(sudoku_array, row, col)
+
+    if len(available_numbers) == 0:
+        return False, state_count, states
+
+    for x in available_numbers:
+        sudoku_array[row, col] = x
+        states.append(sudoku_array.copy()) # Lưu trạng thái cho Playback
+        state_count += 1
+        
+        solved, state_count, states = solve(sudoku_array, state_count, states)
+        if solved:
+            return True, state_count, states
+            
+        sudoku_array[row, col] = 0 # Quay lui
+
+    return False, state_count, states
 
 def solve_with_metrics(sudoku_array):
-    stats = {'count': 0, 'history': []}
+    state_count = 0
+    states = [sudoku_array.copy()]
+    
     tracemalloc.start()
     start_time = time.time()
-    solved = solve_dfs(sudoku_array, stats)
+    
+    solved, state_count, states = solve(sudoku_array, state_count, states)
+    
+    end_time = time.time()
+    current_memory, peak_memory = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    return sudoku_array if solved else None
+    
+    with open('output.txt', 'a') as f:
+        f.write(f"DFS Algorithm:\nStates: {state_count}\nTime: {end_time - start_time:.2f} seconds\nMemory: {peak_memory / 1024:.2f} KB\n\n")
+        
+    if solved:
+        return sudoku_array, states
+    else:
+        return None, states
 
+# ==========================================
+# THUẬT TOÁN A* TỐI ƯU
+# ==========================================
 def calculate_heuristic(sudoku):
     h = 0
+    empty_cells = 0
+    available_cache = {}
+    
     for i in range(N):
         for j in range(N):
             if sudoku[i, j] == 0:
-                available = find_available_numbers(sudoku, i, j)
-                h += (1.0 / len(available)) if available else N*5
-    return h
+                empty_cells += 1
+                if (i,j) not in available_cache:
+                    available_cache[(i,j)] = find_available_numbers(sudoku, i, j)
+                available = available_cache[(i,j)]
+                
+                if not available:
+                    h += N * 2  
+                else:
+                    h += 2.0 / len(available)  
+                    
+    region_penalties = 0
+    for region in regions_dict.values():
+        region_vals = [sudoku[i,j] for i,j in region if sudoku[i,j] != 0]
+        if len(region_vals) != len(set(region_vals)):
+            region_penalties += N
+            
+    return h + empty_cells + region_penalties
+
+def lcv_heuristic(sudoku, row, col, num):
+    conflict_count = 0
+    region = regions_dict[find_region_fast(row, col)]
+    for (i, j) in region:
+        if sudoku[i][j] == 0 and num in find_available_numbers(sudoku, i, j):
+            conflict_count += 1
+    return conflict_count
 
 def a_star_optimized(initial):
     open_heap = []
     closed = set()
     sequence = 0
-    heapq.heappush(open_heap, (calculate_heuristic(initial), sequence, initial.copy()))
-    while open_heap:
-        _, _, current = heapq.heappop(open_heap)
-        if current.tobytes() in closed: continue
-        closed.add(current.tobytes())
-        empty = find_empty(current)
-        if not empty: return current
-        r, c = empty
-        for num in find_available_numbers(current, r, c):
-            new_state = current.copy()
-            new_state[r, c] = num
-            sequence += 1
-            heapq.heappush(open_heap, (calculate_heuristic(new_state), sequence, new_state))
-    return None
-
-# =============================================================================
-# 4. GIAO DIỆN & CÁC NÚT ĐIỀU KHIỂN
-# =============================================================================
-
-def get_board_from_gui():
-    """Lấy dữ liệu hiện tại từ các ô Entry trên màn hình"""
-    board = np.zeros((N, N), dtype=int)
-    for i in range(N):
-        for j in range(N):
-            val = entries[i][j].get()
-            board[i, j] = int(val) if val.isdigit() else 0
-    return board
-
-def check_solution_command():
-    """Kiểm tra xem bảng người dùng tự giải có đúng quy tắc không"""
-    board = get_board_from_gui()
+    state_count = 0
+    states = [initial.copy()]
     
-    # 1. Kiểm tra xem đã điền hết các ô chưa
-    if np.any(board == 0):
-        messagebox.showwarning("Incomplete", "Vui lòng điền hết tất cả các ô trống trước khi kiểm tra!")
-        return
+    tracemalloc.start()
+    start_time = time.time()
+    
+    initial_cost = calculate_heuristic(initial)
+    heapq.heappush(open_heap, (initial_cost, sequence, initial.copy()))
+    
+    while open_heap:
+        current_cost, _, current = heapq.heappop(open_heap)
+        current_bytes = current.tobytes()
+        
+        if current_bytes in closed:
+            continue
+        closed.add(current_bytes)
+        state_count += 1
+        
+        empty = find_empty(current)
+        if not empty:
+            end_time = time.time()
+            current_memory, peak_memory = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            
+            with open('output.txt', 'a') as f:
+                f.write(f"A* Optimized Algorithm:\nStates: {state_count}\n"
+                       f"Time: {end_time - start_time:.2f}s\n"
+                       f"Memory: {peak_memory/1024:.2f} KB\n\n")
+            return current, states
+        
+        row, col = empty
+        available_numbers = find_available_numbers(current, row, col)
+        lcv_sorted = sorted(available_numbers, key=lambda num: lcv_heuristic(current, row, col, num))
+        
+        for num in lcv_sorted:
+            new_state = current.copy()
+            new_state[row, col] = num
+            
+            if is_valid(new_state, row, col):
+                new_h = calculate_heuristic(new_state)
+                states.append(new_state.copy()) # Lưu trạng thái cho Playback
+                heapq.heappush(open_heap, (new_h, sequence, new_state))
+                sequence += 1
+                
+    tracemalloc.stop()
+    return None, states
 
-    # 2. Kiểm tra hàng và cột
-    for i in range(N):
-        if len(set(board[i, :])) != N:
-            messagebox.showerror("Error", f"Hàng {i+1} có số bị trùng hoặc không hợp lệ!")
-            return
-        if len(set(board[:, i])) != N:
-            messagebox.showerror("Error", f"Cột {i+1} có số bị trùng hoặc không hợp lệ!")
-            return
+# ==========================================
+# GIAO DIỆN & PLAYBACK (UI)
+# ==========================================
+recorded_states = []
+current_step = 0
 
-    # 3. Kiểm tra các vùng (Jigsaw Regions)
-    for reg_id, points in regions_dict.items():
-        vals = [board[p] for p in points]
-        if len(set(vals)) != N:
-            messagebox.showerror("Error", f"Vùng '{reg_id}' có số bị trùng hoặc không hợp lệ!")
-            return
+def generate_colors(num_colors):
+    pastel_colors = [
+        '#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFC9', '#BAE1FF',
+        '#E8BAFF', '#E2F0CB', '#FFC8A2', '#D5AAFF', '#B5EAD7'
+    ]
+    return [pastel_colors[i % len(pastel_colors)] for i in range(num_colors)]
 
-    messagebox.showinfo("Success", "Chúc mừng! Bạn đã giải đúng bài toán Sudoku này.")
+region_colors = generate_colors(len(regions_dict))
+region_indices = {region: idx for idx, region in enumerate(regions_dict.keys())}
 
-def solve_command():
-    board = get_board_from_gui()
-    result = a_star_optimized(board) if algo == "A" else solve_with_metrics(board)
-    if result is not None:
-        display_sudoku(result)
-        messagebox.showinfo("Solved", "AI đã tìm ra đáp án!")
-    else:
-        messagebox.showwarning("Failed", "Không tìm thấy đáp án!")
-
-def display_sudoku(matrix):
+def display_sudoku(sudoku):
     for i in range(N):
         for j in range(N):
-            reg_id = find_region(i, j)
-            color = region_colors[region_to_color_idx[reg_id]]
+            region = find_region_fast(i, j)
             entries[i][j].delete(0, tk.END)
-            entries[i][j].config(bg=color)
-            if matrix[i, j] != 0:
-                entries[i][j].insert(0, str(matrix[i, j]))
+            entries[i][j].config(bg=region_colors[region_indices[region]], fg="#2C3E50")
+            if sudoku[i, j] != 0:
+                entries[i][j].insert(0, str(sudoku[i, j]))
 
-def reset_command():
-    try:
-        display_sudoku(construct_sudoku_array())
-    except: pass
+def show_step():
+    global recorded_states, current_step
+    if not recorded_states: return
+    display_sudoku(recorded_states[current_step])
+    step_label.config(text=f"Bước: {current_step + 1} / {len(recorded_states)}")
 
-# Khởi tạo GUI
+def step_forward():
+    global current_step
+    if current_step < len(recorded_states) - 1:
+        current_step += 1
+        show_step()
+
+def step_backward():
+    global current_step
+    if current_step > 0:
+        current_step -= 1
+        show_step()
+
+def solve_sudoku():
+    global recorded_states, current_step
+    sudoku = np.zeros((N, N), dtype=int)
+    for i in range(N):
+        for j in range(N):
+            value = entries[i][j].get()
+            if value:
+                sudoku[i, j] = int(value)
+                
+    step_label.config(text="AI đang suy nghĩ...")
+    root.update()
+
+    if algo == "A":
+        solved_sudoku, states = a_star_optimized(sudoku)
+    elif algo == "B":
+        solved_sudoku, states = solve_with_metrics(sudoku)
+    else:
+        print("Lỗi: Tham số thứ hai phải là 'A' hoặc 'B'")
+        sys.exit(1)
+
+    recorded_states = states
+    
+    if recorded_states:
+        current_step = len(recorded_states) - 1 
+        show_step()
+        prev_btn.config(state=tk.NORMAL)
+        next_btn.config(state=tk.NORMAL)
+        
+    if solved_sudoku is None:
+        messagebox.showinfo("Kết quả", "Không tìm thấy lời giải cho bài toán này!")
+
+def check_solution():
+    sudoku = np.zeros((N, N), dtype=int)
+    for i in range(N):
+        for j in range(N):
+            value = entries[i][j].get()
+            if value: sudoku[i, j] = int(value)
+    
+    for i in range(N):
+        if len(set(sudoku[i, :])) != N:
+            messagebox.showerror("Kết quả", "Sai luật trên Hàng!")
+            return
+    for j in range(N):
+        if len(set(sudoku[:, j])) != N:
+            messagebox.showerror("Kết quả", "Sai luật trên Cột!")
+            return
+    for region in regions_dict.values():
+        region_values = [sudoku[i, j] for i, j in region]
+        if len(set(region_values)) != N:
+            messagebox.showerror("Kết quả", "Sai luật trong Vùng (Region)!")
+            return
+            
+    messagebox.showinfo("Kết quả", "Tuyệt vời! Giải pháp chính xác.")
+
+def reset_sudoku():
+    global recorded_states, current_step
+    recorded_states = []
+    current_step = 0
+    step_label.config(text="Sẵn sàng")
+    prev_btn.config(state=tk.DISABLED)
+    next_btn.config(state=tk.DISABLED)
+    sudoku = construct_sudoku_array()
+    display_sudoku(sudoku)
+
+# ==========================================
+# KHỞI TẠO CỬA SỔ CHÍNH
+# ==========================================
 root = tk.Tk()
-root.title(f"Jigsaw Sudoku {N}x{N}")
-random.seed(42)
-region_colors = ["#{:06x}".format(random.randint(0, 0xFFFFFF)) for _ in range(len(regions_dict))]
-region_to_color_idx = {name: i for i, name in enumerate(regions_dict.keys())}
+root.title("Jigsaw Sudoku AI Solver")
+root.config(bg="#F4F6F7")
 
-frame = tk.Frame(root)
-frame.pack(pady=10, padx=10)
+window_width = N * 80
+window_height = N * 80 + 220
+root.geometry(f"{window_width}x{window_height}")
+root.resizable(False, False)
+
+title_label = tk.Label(root, text="JIGSAW SUDOKU", font=('Helvetica', 24, 'bold'), bg="#F4F6F7", fg="#2C3E50")
+title_label.pack(pady=(15, 5))
+
+frame = tk.Frame(root, bg="#34495E", bd=2)
+frame.pack(pady=5)
 
 entries = [[None for _ in range(N)] for _ in range(N)]
 for i in range(N):
     for j in range(N):
-        e = tk.Entry(frame, width=3, font=('Arial', 18, 'bold'), justify='center', borderwidth=1, relief="solid")
-        e.grid(row=i, column=j, ipady=8)
-        entries[i][j] = e
+        entries[i][j] = tk.Entry(
+            frame, width=3, font=('Helvetica', 24, 'bold'), 
+            justify='center', borderwidth=1, relief="solid", 
+            cursor="hand2"
+        )
+        entries[i][j].grid(row=i, column=j, ipadx=5, ipady=15, padx=1, pady=1)
 
-# Cụm các nút bấm
-btn_solve = tk.Button(root, text="AI SOLVE", command=solve_command, bg="#4CAF50", fg="white", width=25)
-btn_solve.pack(pady=2)
+# --- THANH CÔNG CỤ CHÍNH ---
+button_frame = tk.Frame(root, bg="#F4F6F7")
+button_frame.pack(pady=10)
 
-btn_check = tk.Button(root, text="CHECK MY SOLUTION", command=check_solution_command, bg="#FF9800", fg="white", width=25)
-btn_check.pack(pady=2)
+btn_font = ('Helvetica', 11, 'bold')
+solve_button = tk.Button(button_frame, text="🚀 SOLVE", command=solve_sudoku, font=btn_font, bg="#27AE60", fg="white", relief="flat", width=10, cursor="hand2")
+solve_button.pack(side=tk.LEFT, padx=5)
 
-btn_reset = tk.Button(root, text="RESET BOARD", command=reset_command, bg="#2196F3", fg="white", width=25)
-btn_reset.pack(pady=2)
+check_button = tk.Button(button_frame, text="✔️ CHECK", command=check_solution, font=btn_font, bg="#E67E22", fg="white", relief="flat", width=10, cursor="hand2")
+check_button.pack(side=tk.LEFT, padx=5)
 
-reset_command()
+reset_button = tk.Button(button_frame, text="🔄 RESET", command=reset_sudoku, font=btn_font, bg="#2980B9", fg="white", relief="flat", width=10, cursor="hand2")
+reset_button.pack(side=tk.LEFT, padx=5)
+
+# --- THANH ĐIỀU KHIỂN PLAYBACK ---
+playback_frame = tk.Frame(root, bg="#ecf0f1", bd=1, relief="solid")
+playback_frame.pack(pady=5, padx=20, fill=tk.X)
+
+prev_btn = tk.Button(playback_frame, text="⏪ Lùi", command=step_backward, font=btn_font, bg="#95a5a6", fg="white", relief="flat", width=8, state=tk.DISABLED, cursor="hand2")
+prev_btn.pack(side=tk.LEFT, padx=10, pady=5)
+
+step_label = tk.Label(playback_frame, text="Sẵn sàng", font=('Helvetica', 12, 'bold'), bg="#ecf0f1", fg="#2c3e50")
+step_label.pack(side=tk.LEFT, expand=True, pady=5)
+
+next_btn = tk.Button(playback_frame, text="Tiến ⏩", command=step_forward, font=btn_font, bg="#95a5a6", fg="white", relief="flat", width=8, state=tk.DISABLED, cursor="hand2")
+next_btn.pack(side=tk.RIGHT, padx=10, pady=5)
+
+# Load dữ liệu ban đầu
+sudoku = construct_sudoku_array()
+display_sudoku(sudoku)
+
 root.mainloop()
