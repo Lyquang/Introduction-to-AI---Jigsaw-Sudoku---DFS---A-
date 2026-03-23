@@ -71,7 +71,7 @@ def find_available_numbers(sudoku, i, j):
     set_region = set(sudoku[r, c] for r, c in regions_dict[region_name])
     
     # Số hợp lệ = Tập các số {1..N} trừ đi các số đã xuất hiện
-    used_numbers = set_row.union(set_col).union(set_region)
+    used_numbers = set_row.union(set_col.union(set_region))
     return NUMBERS_SET.difference(used_numbers)
 
 def find_best_empty_cell(sudoku):
@@ -107,7 +107,7 @@ def find_best_empty_cell(sudoku):
 
 def calculate_heuristic(sudoku):
     """
-    Hàm tính giá trị Heuristic (h) cho thuật toán A*.
+    Hàm tính giá trị Heuristic (h) cho thuật toán Greedy.
     h = Tổng số ô trống còn lại + tổng penalty_value của từng ô trống. 
     penalty_value: 
         Nếu ô trống còn lại không còn lựa chọn hợp lệ => gán penalty_value của ô trống này với giá trị lớn (N * 100) => Những state này ở cuối hàng đợi, tránh để giải thuật lặp qua
@@ -122,11 +122,13 @@ def calculate_heuristic(sudoku):
                 available = find_available_numbers(sudoku, i, j)
                 if not available:
                     h += N * 100 
+                else:
+                    h += 1.0 / len(available)
     
-    #Check for conflicts in regions
-    for region in regions_dict.values():
-        values = [sudoku[i,j] for (i,j) in region if sudoku[i,j] != 0]
-        conflict_penalty += (len(values) - len(set(values))) * N
+    #Conflict Penalty ở trong vùng
+    # for region in regions_dict.values():
+    #     values = [sudoku[i,j] for (i,j) in region if sudoku[i,j] != 0]
+    #     conflict_penalty += (len(values) - len(set(values))) * N
     return h + empty_cells + conflict_penalty
 def find_regional_numbers_set(x, i, j):
     regional_points = regions_dict[find_region(i, j)]
@@ -137,24 +139,24 @@ def find_available_numbers(x, i, j):
     set_2 = set(x[:, j])
     set_3 = find_regional_numbers_set(x, i, j)
     return NUMBERS_SET.difference(set_1.union(set_2.union(set_3)))
-def lcv_heuristic(sudoku, row, col, num):
-    """Heuristic cho Least Constraining Value"""
+def num_feasible_cell_in_region(sudoku, row, col, num):
+    """Least Feasible Value"""
     conflict_count = 0
     region = regions_dict[find_region(row, col)]
     for (i, j) in region:
         if sudoku[i][j] == 0 and num in find_available_numbers(sudoku, i, j):
             conflict_count += 1
     return conflict_count
-# ----------------- THUẬT TOÁN A* TỐI ƯU -----------------
-def a_star_solver(initial_state):
+# ----------------- THUẬT TOÁN GBFS TỐI ƯU -----------------
+def best_first_search_solver(initial_state):
     """
-    Giải thuật A* sử dụng Priority Queue.
+    Giải thuật Best First Search sử dụng Priority Queue.
     Priority Queue lưu trữ tuple: (f_cost, sequence, state)
     f_cost: Là giá trị heuristic của state
     sequence: 
         giá trị này để tránh trường hợp lỗi khi f_cost của hai state bằng nhau (lỗi khi so sánh 2 state)
         và để tạo ra một cơ chế xử lí trường hợp f_cost bằng nhau => state nào được push vào queue trước thì xử lí trước
-    Trong đó f_cost = g (số ô đã điền) + h (heuristic đánh giá)
+    Trong đó f_cost = h (hàm heuristic đánh giá)
     """
     open_heap = []
     closed_set = set() # Dùng để tránh duyệt lại các trạng thái trùng lặp
@@ -189,7 +191,7 @@ def a_star_solver(initial_state):
             
             # Ghi báo cáo số liệu
             with open('output.txt', 'a', encoding='utf-8') as f:
-                f.write(f"--- BÁO CÁO THUẬT TOÁN A* ---\n")
+                f.write(f"--- BÁO CÁO THUẬT TOÁN Best First Search ---\n")
                 f.write(f"Số trạng thái đã sinh: {state_count}\n")
                 f.write(f"Thời gian chạy: {end_time - start_time:.4f} giây\n")
                 f.write(f"Tiêu tốn bộ nhớ (Peak): {peak_memory / 1024:.2f} KB\n\n")
@@ -198,12 +200,12 @@ def a_star_solver(initial_state):
             return current_state
         row, col = best_cell
         # Trong các giá trị hợp lệ, ưu tiên xét trước những giá trị mà giá trị này là giá trị hợp lệ của ít ô trống nhất trong region
-        lcv_sorted = sorted(available_numbers, 
-                          key=lambda num: lcv_heuristic(current_state, row, col, num))
+        nfc_sorted = sorted(available_numbers, 
+                          key=lambda num: num_feasible_cell_in_region(current_state, row, col, num))
         
         # Sinh các trạng thái con theo thứ tự ưu tiên trên
         
-        for num in lcv_sorted:
+        for num in nfc_sorted:
             new_state = current_state.copy()
             new_state[row, col] = num
             
@@ -255,7 +257,7 @@ def gui_solve():
             if val.isdigit():
                 current_sudoku[i, j] = int(val)
                 
-    solved_sudoku = a_star_solver(current_sudoku)
+    solved_sudoku = best_first_search_solver(current_sudoku)
     
     if solved_sudoku is not None:
         display_sudoku(solved_sudoku)
@@ -270,7 +272,7 @@ def gui_reset():
 
 # Khởi tạo cửa sổ chính
 root = tk.Tk()
-root.title("Jigsaw Sudoku - A* Algorithm Solver")
+root.title("Jigsaw Sudoku - Best First Search Algorithm Solver")
 root.geometry(f"{N*80 + 50}x{N*90 + 100}")
 root.resizable(False, False)
 
@@ -288,7 +290,7 @@ for i in range(N):
 button_frame = tk.Frame(root)
 button_frame.pack(pady=10)
 
-solve_btn = tk.Button(button_frame, text="Solve (A*)", command=gui_solve, font=('Arial', 14, 'bold'), bg="#4CAF50", fg="white", width=12)
+solve_btn = tk.Button(button_frame, text="Solve (GBFS)", command=gui_solve, font=('Arial', 14, 'bold'), bg="#4CAF50", fg="white", width=12)
 solve_btn.pack(side=tk.LEFT, padx=10)
 
 reset_btn = tk.Button(button_frame, text="Reset", command=gui_reset, font=('Arial', 14, 'bold'), bg="#F44336", fg="white", width=12)
