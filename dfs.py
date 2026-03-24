@@ -2,26 +2,23 @@ import numpy as np
 import tkinter as tk
 from tkinter import messagebox
 import time
-import heapq
 import tracemalloc
 import os
 import random
 import sys
 
 # Định nghĩa kích thước của bài toán
-if len(sys.argv) != 3:
-    print("Cách dùng: python script.py <N> <A|B>")
+if len(sys.argv) != 2 and len(sys.argv) != 3:
+    print("Cách dùng: python script.py <N>")
     sys.exit(1)
 
 try:
     N = int(sys.argv[1])
-    algo = sys.argv[2].upper()
-
 except ValueError:
     print("Lỗi: Tham số thứ nhất phải là một số nguyên")
     sys.exit(1)
 
-#Delete the output file if it exists
+# Delete the output file if it exists
 if os.path.exists('output.txt'):
     os.remove('output.txt')
 
@@ -39,7 +36,7 @@ def construct_sudoku_array():
     return sudoku_array
 
 def find_empty(x):
-# Tìm tất cả các ô trống và chọn ô có số lượng giá trị khả dụng ít nhất để tăng hiệu quả của thuật toán
+    # Tìm tất cả các ô trống và chọn ô có số lượng giá trị khả dụng ít nhất (Heuristic MRV)
     empty_items_list = []
     for index, item in np.ndenumerate(x):
         if item == 0:
@@ -49,7 +46,7 @@ def find_empty(x):
         for i in empty_items_list:
             a = len(find_available_numbers(x, i[0], i[1]))
             empty_items_num_of_available_numbers.append(a)
-            #trả về ô trống có số lượng giá trị khả dụng ít nhất
+        # trả về ô trống có số lượng giá trị khả dụng ít nhất
         return empty_items_list[empty_items_num_of_available_numbers.index(min(empty_items_num_of_available_numbers))]
     return None
 
@@ -146,120 +143,16 @@ def solve_with_metrics(sudoku_array):
     end_time = time.time()
     current_memory, peak_memory = tracemalloc.get_traced_memory()
     tracemalloc.stop()
+    
     with open('output.txt', 'a') as f:
         f.write(f"DFS Algorithm:\nStates: {state_count}\nTime: {end_time - start_time:.2f} seconds\nMemory: {peak_memory / 1024:.2f} KB\n\n")
         for state in states:
             f.write(np.array2string(state) + "\n\n")
+            
     if solved:
         return sudoku_array
     else:
         return None
-
-def calculate_heuristic(sudoku):
-    """Heuristic tổng hợp cho Jigsaw Sudoku"""
-    h = 0
-    empty_cells = 0
-    conflict_penalty = 0
-    
-    for i in range(N):
-        for j in range(N):
-            if sudoku[i, j] == 0:
-                empty_cells += 1
-                available = find_available_numbers(sudoku, i, j)
-                if not available:
-                    h += N * 2  
-                else:
-                    h += 1.0 / len(available)  
-    
-    #Check for conflicts in regions
-    for region in regions_dict.values():
-        values = [sudoku[i,j] for (i,j) in region if sudoku[i,j] != 0]
-        conflict_penalty += (len(values) - len(set(values))) * N
-        
-    return h + empty_cells + conflict_penalty
-
-def a_star_optimized(initial):
-    open_heap = []
-    closed = set()
-    sequence = 0
-    state_count = 0
-    states = []
-    
-    tracemalloc.start()
-    start_time = time.time()
-    
-    initial_cost = calculate_heuristic(initial)
-    heapq.heappush(open_heap, (initial_cost, sequence, initial.copy()))
-    
-    while open_heap:
-        current_cost, _, current = heapq.heappop(open_heap)
-        current_bytes = current.tobytes()
-        
-        if current_bytes in closed:
-            continue
-        closed.add(current_bytes)
-        state_count += 1
-        
-        empty = find_empty(current)
-        if not empty:
-            end_time = time.time()
-            current_memory, peak_memory = tracemalloc.get_traced_memory()
-            tracemalloc.stop()
-            
-            with open('output.txt', 'a') as f:
-                f.write(f"A* Optimized Algorithm:\nStates: {state_count}\n"
-                       f"Time: {end_time - start_time:.2f}s\n"
-                       f"Memory: {peak_memory/1024:.2f} KB\n\n")
-                for state in states:
-                    f.write(np.array2string(state) + "\n\n")
-            return current
-        
-        row, col = empty
-        available_numbers = find_available_numbers(current, row, col)
-        
-        # Sort available numbers by least constraining value heuristic
-        lcv_sorted = sorted(available_numbers, 
-                          key=lambda num: lcv_heuristic(current, row, col, num))
-        
-        for num in lcv_sorted:
-            new_state = current.copy()
-            new_state[row, col] = num
-            
-            if is_valid(new_state, row, col):
-                new_h = calculate_heuristic(new_state)
-                new_cost = new_h
-                
-                display_sudoku(new_state)
-                root.update()
-                states.append(new_state.copy())
-                
-                heapq.heappush(open_heap, (new_cost, sequence, new_state))
-                sequence += 1
-    
-    tracemalloc.stop()
-    return None
-
-def lcv_heuristic(sudoku, row, col, num):
-    """Heuristic cho Least Constraining Value"""
-    conflict_count = 0
-    region = regions_dict[find_region(row, col)]
-    for (i, j) in region:
-        if sudoku[i][j] == 0 and num in find_available_numbers(sudoku, i, j):
-            conflict_count += 1
-    return conflict_count
-
-def is_valid(sudoku, row, col):
-    """Kiểm tra tính hợp lệ của giá trị mới trong ô"""
-    val = sudoku[row][col]
-    # Check hàng
-    if np.count_nonzero(sudoku[row, :] == val) > 1:
-        return False
-    # Check cột
-    if np.count_nonzero(sudoku[:, col] == val) > 1:
-        return False
-    # Check vùng
-    region = regions_dict[find_region(row, col)]
-    return np.count_nonzero([sudoku[i,j] == val for (i,j) in region]) <= 1
 
 def generate_colors(num_colors):
     """Generate a list of distinct colors."""
@@ -291,13 +184,9 @@ def solve_sudoku():
             value = entries[i][j].get()
             if value:
                 sudoku[i, j] = int(value)
-    if algo == "A":
-        solved_sudoku = a_star_optimized(sudoku)
-    elif algo == "B":
-        solved_sudoku = solve_with_metrics(sudoku)
-    else:
-        print("Lỗi: Tham số thứ hai phải là 'A' hoặc 'B'")
-        sys.exit(1)
+                
+    # Chỉ gọi hàm giải của thuật toán DFS
+    solved_sudoku = solve_with_metrics(sudoku)
 
     if solved_sudoku is not None:
         display_sudoku(solved_sudoku)
@@ -337,7 +226,7 @@ def reset_sudoku():
     display_sudoku(sudoku)
 
 root = tk.Tk()
-root.title("Sudoku Solver")
+root.title("Sudoku Solver (DFS Only)")
 
 root.geometry(f"{N*80}x{N*110}")
 root.resizable(False, False)
@@ -354,7 +243,7 @@ for i in range(N):
 button_frame = tk.Frame(root)
 button_frame.pack(pady=10)
 
-solve_button = tk.Button(button_frame, text="Solve", command=solve_sudoku, font=('Arial', 14), bg="#4CAF50", fg="white", relief="raised", width=15)
+solve_button = tk.Button(button_frame, text="Solve (DFS)", command=solve_sudoku, font=('Arial', 14), bg="#4CAF50", fg="white", relief="raised", width=15)
 solve_button.pack(side=tk.LEFT, padx=5)
 
 check_button = tk.Button(button_frame, text="Check Solution", command=check_solution, font=('Arial', 14), bg="#FF5733", fg="white", relief="raised", width=15)
@@ -369,32 +258,3 @@ reset_button.pack()
 display_sudoku(sudoku)
 
 root.mainloop()
-
-def calculate_heuristic(sudoku):
-    """Heuristic tổng hợp với trọng số cho các yếu tố khác nhau"""
-    h = 0
-    empty_cells = 0
-    
-    available_cache = {}
-    
-    for i in range(N):
-        for j in range(N):
-            if sudoku[i, j] == 0:
-                empty_cells += 1
-                if (i,j) not in available_cache:
-                    available_cache[(i,j)] = find_available_numbers(sudoku, i, j)
-                available = available_cache[(i,j)]
-                
-                if not available:
-                    h += N * 2  
-                else:
-                    h += 2.0 / len(available)  
-    
-    region_penalties = 0
-    for region in regions_dict.values():
-        region_vals = [sudoku[i,j] for i,j in region if sudoku[i,j] != 0]
-        if len(region_vals) != len(set(region_vals)):
-            region_penalties += N
-            
-    return h + empty_cells + region_penalties
-
